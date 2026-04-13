@@ -3,6 +3,7 @@ package edu.uob;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import java.io.File;
@@ -65,5 +66,31 @@ class ExampleSTAGTests {
   }
 
   // Add more unit tests or integration tests here.
+  // 第一天测试
+  @Test
+  void testMapLoading() {
+      // 从 server 中获取加载好的游戏地图
+      java.util.HashMap<String, Location> map = server.getGameMap();
 
+      // 1. 验证关键房间和 storeroom 是否存在
+      assertTrue(map.containsKey("cabin"), "Map should contain 'cabin'");
+      assertTrue(map.containsKey("forest"), "Map should contain 'forest'");
+      assertTrue(map.containsKey("storeroom"), "Map should contain 'storeroom'");
+
+      // 2. 验证 cabin 中的实体解析是否正确
+      Location cabin = map.get("cabin");
+      assertEquals("A log cabin in the woods", cabin.getDescription(), "Cabin description is wrong");
+
+      boolean foundAxe = false;
+      boolean foundTrapdoor = false;
+      for (GameEntity entity : cabin.getEntities()) {
+          if (entity.getName().equals("axe") && entity instanceof Artefact) foundAxe = true;
+          if (entity.getName().equals("trapdoor") && entity instanceof Furniture) foundTrapdoor = true;
+      }
+      assertTrue(foundAxe, "Cabin should contain the artefact 'axe'");
+      assertTrue(foundTrapdoor, "Cabin should contain the furniture 'trapdoor'");
+
+      // 3. 验证路径连通性
+      assertTrue(cabin.getPaths().containsKey("forest"), "Cabin should have a path to 'forest'");
+  }
 }

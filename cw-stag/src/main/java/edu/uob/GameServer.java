@@ -27,6 +27,8 @@ public final class GameServer {
 
     // 保存游戏中所有的地点 (名称 -> 地点对象)
     private HashMap<String, Location> gameMap;
+    // 保存所有在游戏中的玩家 (用户名 -> 玩家对象)
+    private HashMap<String, Player> players = new HashMap<>();
     // 记录玩家第一次进入游戏的初始地点
     private Location startLocation;
 
@@ -140,8 +142,40 @@ public final class GameServer {
     * @param command The incoming command to be processed
     */
     public String handleCommand(String command) {
-        // TODO implement your server logic here
-        return "";
+        // 1. 拆分用户名和指令 (例如 "simon: look")
+        String[] parts = command.split(":", 2);
+        if (parts.length < 2) return "Error: Invalid command format. Expected 'username: command'.";
+
+        String username = parts[0].trim();
+        String rawCommand = parts[1].trim();
+
+        // 2. 获取或创建玩家
+        if (!players.containsKey(username)) {
+            Player newPlayer = new Player(username, "A traveler in this world");
+            newPlayer.setCurrentLocation(startLocation); // startLocation 是你昨天在构造函数里记录的第一个地点
+            players.put(username, newPlayer);
+        }
+        Player currentPlayer = players.get(username);
+
+        // 3. 处理指令 (大小写不敏感)
+        String cmdLower = rawCommand.toLowerCase();
+
+        if (cmdLower.equals("look")) {
+            return performLook(currentPlayer);
+        } else if (cmdLower.startsWith("goto ")) {
+            String destination = rawCommand.substring(5).trim();
+            return performGoto(currentPlayer, destination);
+        } else if (cmdLower.equals("inv") || cmdLower.equals("inventory")) {
+            return performInventory(currentPlayer);
+        } else if (cmdLower.startsWith("get ")) {
+            String itemName = rawCommand.substring(4).trim();
+            return performGet(currentPlayer, itemName);
+        } else if (cmdLower.startsWith("drop ")) {
+            String itemName = rawCommand.substring(5).trim();
+            return performDrop(currentPlayer, itemName);
+        } else {
+            return "Error: Unknown command.";
+        }
     }
 
     /**
@@ -185,5 +219,119 @@ public final class GameServer {
                 writer.flush();
             }
         }
+    }
+
+    private String performLook(Player player) {
+        Location loc = player.getCurrentLocation();
+        StringBuilder result = new StringBuilder();
+
+        // 1. 地点名和描述
+        result.append("You are in ").append(loc.getName()).append(". ").append(loc.getDescription()).append("\n");
+
+        // 2. 这里的实体 (Artefacts, Furniture, Characters)
+        result.append("You can see:\n");
+        for (GameEntity entity : loc.getEntities()) {
+            result.append("- ").append(entity.getDescription()).append(" (").append(entity.getName()).append(")\n");
+        }
+
+        // 3. 其他玩家
+        for (Player other : players.values()) {
+            if (other != player && other.getCurrentLocation() == loc) {
+                result.append("- Another player is here: ").append(other.getName()).append("\n");
+            }
+        }
+
+        // 4. 通往其他地点的路径
+        result.append("You can go to:\n");
+        for (String pathName : loc.getPaths().keySet()) {
+            result.append("- ").append(pathName).append("\n");
+        }
+
+        return result.toString();
+    }
+
+    private String performGoto(Player player, String destination) {
+        Location currentLoc = player.getCurrentLocation();
+        HashMap<String, Location> availablePaths = currentLoc.getPaths();
+
+        // 检查是否有该路径 (忽略大小写)
+        Location nextLoc = null;
+        for (String pathName : availablePaths.keySet()) {
+            if (pathName.equalsIgnoreCase(destination)) {
+                nextLoc = availablePaths.get(pathName);
+                break;
+            }
+        }
+
+        if (nextLoc != null) {
+            player.setCurrentLocation(nextLoc);
+            return performLook(player); // 移动成功后自动 look
+        } else {
+            return "You cannot go to " + destination + " from here.";
+        }
+    }
+
+    private String performInventory(Player player) {
+        ArrayList<Artefact> inv = player.getInventory();
+        if (inv.isEmpty()) {
+            return "Your inventory is empty.";
+        }
+
+        StringBuilder result = new StringBuilder("You are carrying:\n");
+        for (Artefact artefact : inv) {
+            result.append("- ").append(artefact.getDescription())
+                    .append(" (").append(artefact.getName()).append(")\n");
+        }
+        return result.toString();
+    }
+
+    private String performGet(Player player, String itemName) {
+        Location currentLoc = player.getCurrentLocation();
+        GameEntity targetEntity = null;
+
+        // 1. 在当前房间里寻找这个物品 (忽略大小写)
+        for (GameEntity entity : currentLoc.getEntities()) {
+            if (entity.getName().equalsIgnoreCase(itemName)) {
+                targetEntity = entity;
+                break;
+            }
+        }
+
+        // 2. 判断是否找到，以及是否是可收集物品 (Artefact)
+        if (targetEntity == null) {
+            return "There is no " + itemName + " here.";
+        }
+        if (!(targetEntity instanceof Artefact)) {
+            return "You cannot pick up " + itemName + "!"; // 比如你想 get tree 或者 get trapdoor
+        }
+
+        // 3. 转移物品
+        currentLoc.removeEntity(targetEntity);
+        player.addArtefactToInventory((Artefact) targetEntity);
+
+        return "You picked up the " + itemName + ".";
+    }
+
+    private String performDrop(Player player, String itemName) {
+        Artefact targetArtefact = null;
+
+        // 1. 在玩家背包里寻找这个物品
+        for (Artefact artefact : player.getInventory()) {
+            if (artefact.getName().equalsIgnoreCase(itemName)) {
+                targetArtefact = artefact;
+                break;
+            }
+        }
+
+        // 2. 如果没找到
+        if (targetArtefact == null) {
+            return "You do not have " + itemName + " in your inventory.";
+        }
+
+        // 3. 转移物品
+        player.getInventory().remove(targetArtefact);
+        player.getCurrentLocation().addEntity(targetArtefact);
+
+        return "You dropped the " + itemName + ".";
     }
 }

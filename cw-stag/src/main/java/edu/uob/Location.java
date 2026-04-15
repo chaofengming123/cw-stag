@@ -29,6 +29,10 @@ public class Location extends GameEntity {
         entities.add(entity);
     }
 
+    public void removeEntity(GameEntity entity) {
+        entities.remove(entity);
+    }
+
     public ArrayList<GameEntity> getEntities() {
         return entities;
     }

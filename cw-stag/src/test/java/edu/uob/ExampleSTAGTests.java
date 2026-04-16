@@ -67,17 +67,15 @@ class ExampleSTAGTests {
 
   // Add more unit tests or integration tests here.
 
+  // Check if the game map is correctly loaded
   @Test
   void testMapLoading() {
-      // 从 server 中获取加载好的游戏地图
       java.util.HashMap<String, Location> map = server.getGameMap();
 
-      // 1. 验证关键房间和 storeroom 是否存在
       assertTrue(map.containsKey("cabin"), "Map should contain 'cabin'");
       assertTrue(map.containsKey("forest"), "Map should contain 'forest'");
       assertTrue(map.containsKey("storeroom"), "Map should contain 'storeroom'");
 
-      // 2. 验证 cabin 中的实体解析是否正确
       Location cabin = map.get("cabin");
       assertEquals("A log cabin in the woods", cabin.getDescription(), "Cabin description is wrong");
 
@@ -90,12 +88,12 @@ class ExampleSTAGTests {
       assertTrue(foundAxe, "Cabin should contain the artefact 'axe'");
       assertTrue(foundTrapdoor, "Cabin should contain the furniture 'trapdoor'");
 
-      // 3. 验证路径连通性
       assertTrue(cabin.getPaths().containsKey("forest"), "Cabin should have a path to 'forest'");
   }
 
-    @Test
-    void testGameActionModel() {
+  // Check if GameAction correctly processes triggers into lowercase, stores subjects and narration, and initializes with an empty list of consumed entities
+  @Test
+  void testGameActionModel() {
         GameAction action = new GameAction();
 
         action.addTrigger("OPEN");
@@ -109,20 +107,17 @@ class ExampleSTAGTests {
         assertTrue(action.getConsumed().isEmpty(), "Consumed should be empty if nothing added");
     }
 
-    @Test
-    void testServerActionParsing() {
-        // 1. 从 server 获取已加载的动作列表
+  // Check if the server correctly parses game actions from XML
+  @Test
+  void testServerActionParsing() {
         java.util.HashSet<GameAction> actions = server.getValidActions();
 
-        // 2. 确保没有解析失败，列表中应该有动作
         assertFalse(actions.isEmpty(), "Server should have parsed some actions from XML");
 
-        // 3. 在基础的 basic-actions.xml 中，应该有两个主要动作: open 和 chop
         boolean foundOpenAction = false;
         boolean foundChopAction = false;
 
         for (GameAction action : actions) {
-            // 检查 open 动作
             if (action.getTriggers().contains("open") && action.getTriggers().contains("unlock")) {
                 foundOpenAction = true;
                 assertTrue(action.getSubjects().contains("trapdoor"), "Open action needs trapdoor");
@@ -130,7 +125,6 @@ class ExampleSTAGTests {
                 assertTrue(action.getProduced().contains("cellar"), "Open action produces cellar");
             }
 
-            // 检查 chop 动作 (它测试了 consumed 标签)
             if (action.getTriggers().contains("chop")) {
                 foundChopAction = true;
                 assertTrue(action.getSubjects().contains("tree") && action.getSubjects().contains("axe"));
@@ -138,8 +132,22 @@ class ExampleSTAGTests {
             }
         }
 
-        // 4. 断言这两个动作都被成功解析了
         assertTrue(foundOpenAction, "The 'open' action was not parsed correctly.");
         assertTrue(foundChopAction, "The 'chop' action was not parsed correctly.");
+    }
+
+  // Verifies custom action execution including fuzzy matching, entity consumption, and path production.
+  @Test
+  void testCustomActionExecution() {
+        sendCommandToServer("simon: get potion");
+        sendCommandToServer("simon: goto forest");
+        sendCommandToServer("simon: get key");
+        sendCommandToServer("simon: goto cabin");
+
+        String response = sendCommandToServer("simon: please open the trapdoor using the key!!");
+
+        assertTrue(response.toLowerCase().contains("unlock the trapdoor"), "Narration mismatch");
+        assertTrue(sendCommandToServer("simon: look").toLowerCase().contains("cellar"), "Produced path missing");
+        assertFalse(sendCommandToServer("simon: inv").toLowerCase().contains("key"), "Consumed entity remains");
     }
 }

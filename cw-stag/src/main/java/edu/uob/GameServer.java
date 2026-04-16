@@ -109,7 +109,7 @@ public final class GameServer {
             String itemName = rawCommand.substring(5).trim();
             return performDrop(currentPlayer, itemName);
         } else {
-            return "Error: Unknown command.";
+            return processCustomAction(currentPlayer, cmdLower);
         }
     }
 
@@ -261,7 +261,7 @@ public final class GameServer {
         Location currentLoc = player.getCurrentLocation();
         HashMap<String, Location> availablePaths = currentLoc.getPaths();
 
-        // 检查是否有该路径 (忽略大小写)
+        // Check if the next location exists
         Location nextLoc = null;
         for (String pathName : availablePaths.keySet()) {
             if (pathName.equalsIgnoreCase(destination)) {
@@ -272,7 +272,7 @@ public final class GameServer {
 
         if (nextLoc != null) {
             player.setCurrentLocation(nextLoc);
-            return performLook(player); // 移动成功后自动 look
+            return performLook(player);
         } else {
             return "You cannot go to " + destination + " from here.";
         }
@@ -296,7 +296,7 @@ public final class GameServer {
         Location currentLoc = player.getCurrentLocation();
         GameEntity targetEntity = null;
 
-        // 1. 在当前房间里寻找这个物品 (忽略大小写)
+        // 1. Find this item in the current room
         for (GameEntity entity : currentLoc.getEntities()) {
             if (entity.getName().equalsIgnoreCase(itemName)) {
                 targetEntity = entity;
@@ -304,7 +304,7 @@ public final class GameServer {
             }
         }
 
-        // 2. 判断是否找到，以及是否是可收集物品 (Artefact)
+        // 2. Check if found and verify if it is an Artefact
         if (targetEntity == null) {
             return "There is no " + itemName + " here.";
         }
@@ -312,7 +312,7 @@ public final class GameServer {
             return "You cannot pick up " + itemName + "!"; // 比如你想 get tree 或者 get trapdoor
         }
 
-        // 3. 转移物品
+        // 3. Add to inventory
         currentLoc.removeEntity(targetEntity);
         player.addArtefactToInventory((Artefact) targetEntity);
 
@@ -322,7 +322,7 @@ public final class GameServer {
     private String performDrop(Player player, String itemName) {
         Artefact targetArtefact = null;
 
-        // 1. 在玩家背包里寻找这个物品
+        // 1. Find this item in inventory
         for (Artefact artefact : player.getInventory()) {
             if (artefact.getName().equalsIgnoreCase(itemName)) {
                 targetArtefact = artefact;
@@ -330,46 +330,46 @@ public final class GameServer {
             }
         }
 
-        // 2. 如果没找到
+        // 2. If not found
         if (targetArtefact == null) {
             return "You do not have " + itemName + " in your inventory.";
         }
 
-        // 3. 转移物品
+        // 3. If found
         player.getInventory().remove(targetArtefact);
         player.getCurrentLocation().addEntity(targetArtefact);
 
         return "You dropped the " + itemName + ".";
     }
-    // Parse actions
+    // Parse action
     private void parseActionsFile(File actionsFile) {
         try {
             DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
             Document document = builder.parse(actionsFile);
             Element root = document.getDocumentElement();
 
-            // 获取所有的 <action> 节点
+            // Get all 'action' elements
             NodeList actionsList = root.getElementsByTagName("action");
 
             for (int i = 0; i < actionsList.getLength(); i++) {
                 Element actionElement = (Element) actionsList.item(i);
                 GameAction newAction = new GameAction();
 
-                // 1. 解析 triggers
+                // 1. Parse triggers
                 Element triggers = (Element) actionElement.getElementsByTagName("triggers").item(0);
                 NodeList keyphrases = triggers.getElementsByTagName("keyphrase");
                 for (int j = 0; j < keyphrases.getLength(); j++) {
                     newAction.addTrigger(keyphrases.item(j).getTextContent());
                 }
 
-                // 2. 解析 subjects
+                // 2. Parse subjects
                 Element subjects = (Element) actionElement.getElementsByTagName("subjects").item(0);
                 NodeList subjectEntities = subjects.getElementsByTagName("entity");
                 for (int j = 0; j < subjectEntities.getLength(); j++) {
                     newAction.addSubject(subjectEntities.item(j).getTextContent());
                 }
 
-                // 3. 解析 consumed (小心：这个标签可能不存在！)
+                // 3. Parse consumed
                 NodeList consumedNodes = actionElement.getElementsByTagName("consumed");
                 if (consumedNodes.getLength() > 0) {
                     Element consumed = (Element) consumedNodes.item(0);
@@ -379,7 +379,7 @@ public final class GameServer {
                     }
                 }
 
-                // 4. 解析 produced (小心：这个标签也可能不存在！)
+                // 4. Parse produced
                 NodeList producedNodes = actionElement.getElementsByTagName("produced");
                 if (producedNodes.getLength() > 0) {
                     Element produced = (Element) producedNodes.item(0);
@@ -389,15 +389,159 @@ public final class GameServer {
                     }
                 }
 
-                // 5. 解析 narration
+                // 5. Parse narration
                 String narration = actionElement.getElementsByTagName("narration").item(0).getTextContent();
                 newAction.setNarration(narration);
 
-                // 把组装好的 Action 存入服务器字典
                 validActions.add(newAction);
             }
         } catch (Exception e) {
             System.err.println("Failed to parse actions XML file: " + e.getMessage());
         }
+    }
+    // Process action
+    private String processCustomAction(Player player, String command) {
+        Location currentLoc = player.getCurrentLocation();
+        ArrayList<GameAction> possibleActions = new ArrayList<>();
+
+        // Filter by triggers and subjects mentioned in the command
+        for (GameAction action : validActions) {
+            boolean hasTrigger = false;
+            for (String trigger : action.getTriggers()) {
+                if (command.contains(trigger)) {
+                    hasTrigger = true;
+                    break;
+                }
+            }
+
+            if (hasTrigger) {
+                boolean hasAllSubjects = true;
+                for (String subject : action.getSubjects()) {
+                    if (!command.contains(subject)) {
+                        hasAllSubjects = false;
+                        break;
+                    }
+                }
+                if (hasAllSubjects) {
+                    possibleActions.add(action);
+                }
+            }
+        }
+
+        if (possibleActions.isEmpty()) {
+            return "You cannot do that here.";
+        }
+
+        // Check entity availability
+        ArrayList<GameAction> executableActions = new ArrayList<>();
+        for (GameAction action : possibleActions) {
+            boolean allAvailable = true;
+            for (String subject : action.getSubjects()) {
+                boolean found = false;
+                // Check inventory
+                for (Artefact a : player.getInventory()) {
+                    if (a.getName().equals(subject))
+                        found = true;
+                }
+                // Check current location entities
+                for (GameEntity e : currentLoc.getEntities()) {
+                    if (e.getName().equals(subject))
+                        found = true;
+                }
+
+                if (!found) {
+                    allAvailable = false;
+                    break;
+                }
+            }
+            if (allAvailable) {
+                executableActions.add(action);
+            }
+        }
+
+        // Check ambiguity
+        if (executableActions.size() > 1) {
+            return "Ambiguous command. Please be more specific.";
+        } else if (executableActions.isEmpty()) {
+            return "You don't have the necessary items to do that.";
+        }
+
+        // Check extraneous entities
+        GameAction finalAction = executableActions.get(0);
+        for (Location loc : gameMap.values()) {
+            for (GameEntity e : loc.getEntities()) {
+                String entityName = e.getName();
+                // If the command mentions an entity that is not a subject of the matched action
+                if (command.contains(entityName) && !finalAction.getSubjects().contains(entityName)) {
+                    return "You cannot use the " + entityName + " like that.";
+                }
+            }
+        }
+
+        // Execute the valid action
+        return executeAction(player, finalAction);
+    }
+    // Execute action
+    private String executeAction(Player player, GameAction action) {
+        Location currentLoc = player.getCurrentLocation();
+        Location storeroom = gameMap.get("storeroom");
+
+        // Consume entities(remove them from game map/inventory and put them in storeroom)
+        for (String consumedName : action.getConsumed()) {
+            // Remove paths
+            if (gameMap.containsKey(consumedName) && !consumedName.equals("storeroom")) {
+                currentLoc.getPaths().remove(consumedName);
+                continue;
+            }
+
+            GameEntity entityToConsume = null;
+            // Search in inventory
+            for (Artefact a : player.getInventory()) {
+                if (a.getName().equals(consumedName)) entityToConsume = a;
+            }
+            if (entityToConsume != null) {
+                player.getInventory().remove((Artefact) entityToConsume);
+            } else {
+                // Search in current location
+                for (GameEntity e : currentLoc.getEntities()) {
+                    if (e.getName().equals(consumedName)) entityToConsume = e;
+                }
+                if (entityToConsume != null) {
+                    currentLoc.removeEntity(entityToConsume);
+                }
+            }
+
+            // Move to storeroom
+            if (entityToConsume != null && storeroom != null) {
+                storeroom.addEntity(entityToConsume);
+            }
+        }
+
+        // Produce entities(bring them from storeroom to the current location)
+        for (String producedName : action.getProduced()) {
+            // Add paths
+            if (gameMap.containsKey(producedName) && !producedName.equals("storeroom")) {
+                currentLoc.addPath(producedName, gameMap.get(producedName));
+                continue;
+            }
+
+            // Search in storeroom
+            if (storeroom != null) {
+                GameEntity entityToProduce = null;
+                for (GameEntity e : storeroom.getEntities()) {
+                    if (e.getName().equals(producedName)) {
+                        entityToProduce = e;
+                        break;
+                    }
+                }
+                // Move to current location
+                if (entityToProduce != null) {
+                    storeroom.removeEntity(entityToProduce);
+                    currentLoc.addEntity(entityToProduce);
+                }
+            }
+        }
+
+        return action.getNarration();
     }
 }

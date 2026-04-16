@@ -66,7 +66,7 @@ class ExampleSTAGTests {
   }
 
   // Add more unit tests or integration tests here.
-  // 第一天测试
+
   @Test
   void testMapLoading() {
       // 从 server 中获取加载好的游戏地图
@@ -93,4 +93,53 @@ class ExampleSTAGTests {
       // 3. 验证路径连通性
       assertTrue(cabin.getPaths().containsKey("forest"), "Cabin should have a path to 'forest'");
   }
+
+    @Test
+    void testGameActionModel() {
+        GameAction action = new GameAction();
+
+        action.addTrigger("OPEN");
+        action.addSubject("trapdoor");
+        action.setNarration("You open the door.");
+
+        assertTrue(action.getTriggers().contains("open"), "Trigger should be converted to lowercase 'open'");
+        assertFalse(action.getTriggers().contains("OPEN"), "Uppercase trigger should not exist");
+        assertTrue(action.getSubjects().contains("trapdoor"), "Subject should be added");
+        assertEquals("You open the door.", action.getNarration(), "Narration should match");
+        assertTrue(action.getConsumed().isEmpty(), "Consumed should be empty if nothing added");
+    }
+
+    @Test
+    void testServerActionParsing() {
+        // 1. 从 server 获取已加载的动作列表
+        java.util.HashSet<GameAction> actions = server.getValidActions();
+
+        // 2. 确保没有解析失败，列表中应该有动作
+        assertFalse(actions.isEmpty(), "Server should have parsed some actions from XML");
+
+        // 3. 在基础的 basic-actions.xml 中，应该有两个主要动作: open 和 chop
+        boolean foundOpenAction = false;
+        boolean foundChopAction = false;
+
+        for (GameAction action : actions) {
+            // 检查 open 动作
+            if (action.getTriggers().contains("open") && action.getTriggers().contains("unlock")) {
+                foundOpenAction = true;
+                assertTrue(action.getSubjects().contains("trapdoor"), "Open action needs trapdoor");
+                assertTrue(action.getConsumed().contains("key"), "Open action consumes key");
+                assertTrue(action.getProduced().contains("cellar"), "Open action produces cellar");
+            }
+
+            // 检查 chop 动作 (它测试了 consumed 标签)
+            if (action.getTriggers().contains("chop")) {
+                foundChopAction = true;
+                assertTrue(action.getSubjects().contains("tree") && action.getSubjects().contains("axe"));
+                assertTrue(action.getConsumed().contains("tree"), "Chop action should consume tree");
+            }
+        }
+
+        // 4. 断言这两个动作都被成功解析了
+        assertTrue(foundOpenAction, "The 'open' action was not parsed correctly.");
+        assertTrue(foundChopAction, "The 'chop' action was not parsed correctly.");
+    }
 }

@@ -15,22 +15,36 @@ import com.alexmerz.graphviz.objects.Graph;
 import com.alexmerz.graphviz.objects.Node;
 
 import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.DocumentBuilder;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 
 public final class GameServer {
 
     private static final char END_OF_TRANSMISSION = 4;
 
-    // 保存游戏中所有的地点 (名称 -> 地点对象)
+    // Save locations
     private HashMap<String, Location> gameMap;
-    // 保存所有在游戏中的玩家 (用户名 -> 玩家对象)
+    // Sava players
     private HashMap<String, Player> players = new HashMap<>();
-    // 记录玩家第一次进入游戏的初始地点
+    // Record initial location
     private Location startLocation;
+    // Store all parsed actions
+    private HashSet<GameAction> validActions;
+
+    // For testing
+    public HashSet<GameAction> getValidActions() {
+        return validActions;
+    }
+    public HashMap<String, Location> getGameMap() {
+        return gameMap;
+    }
 
     public static void main(String[] args) throws IOException {
         File entitiesFile = Paths.get("config" + File.separator + "basic-entities.dot").toAbsolutePath().toFile();
@@ -47,92 +61,13 @@ public final class GameServer {
     * @param actionsFile The game configuration file containing all game actions to use in your game
     */
     public GameServer(File entitiesFile, File actionsFile) {
-        // 1. 初始化地图容器
         gameMap = new HashMap<>();
+        // Initialize
+        validActions = new HashSet<>();
 
-        // 2. 解析实体文件
         parseEntitiesFile(entitiesFile);
-        // TODO implement your server logic here
-    }
-
-    // 为了方便我们后续做单元测试，临时添加一个 getter 方法
-    public HashMap<String, Location> getGameMap() {
-        return gameMap;
-    }
-
-    // --- 核心解析逻辑：读取 DOT 文件 ---
-    private void parseEntitiesFile(File entitiesFile) {
-        try {
-            Parser parser = new Parser();
-            FileReader reader = new FileReader(entitiesFile);
-            parser.parse(reader);
-            Graph wholeDocument = parser.getGraphs().get(0);
-            ArrayList<Graph> sections = wholeDocument.getSubgraphs();
-
-            // DOT 文件包含两个主要子图：locations(0) 和 paths(1)
-            Graph locations = sections.get(0);
-            Graph paths = sections.get(1);
-
-            // 1. 解析所有的 Locations 及其内部的实体
-            boolean isFirstLocation = true;
-            for (Graph locationGraph : locations.getSubgraphs()) {
-                // 获取地点节点 (比如 cabin, forest)
-                Node locationDetails = locationGraph.getNodes(false).get(0);
-                String locName = locationDetails.getId().getId();
-                String locDesc = locationDetails.getAttribute("description");
-
-                Location newLocation = new Location(locName, locDesc);
-                gameMap.put(locName, newLocation);
-
-                // 设置初始出生点（文件中的第一个地点）
-                if (isFirstLocation) {
-                    startLocation = newLocation;
-                    isFirstLocation = false;
-                }
-
-                // 获取地点内部的分类（artefacts, furniture, characters）
-                for (Graph entityCategory : locationGraph.getSubgraphs()) {
-                    String categoryName = entityCategory.getId().getId();
-
-                    // 遍历该分类下的所有具体实体
-                    for (Node entityNode : entityCategory.getNodes(false)) {
-                        String entityName = entityNode.getId().getId();
-                        String entityDesc = entityNode.getAttribute("description");
-
-                        // 根据分类实例化不同类型的对象，并放入当前地点
-                        if (categoryName.equals("artefacts")) {
-                            newLocation.addEntity(new Artefact(entityName, entityDesc));
-                        } else if (categoryName.equals("furniture")) {
-                            newLocation.addEntity(new Furniture(entityName, entityDesc));
-                        } else if (categoryName.equals("characters")) {
-                            newLocation.addEntity(new Character(entityName, entityDesc));
-                        }
-                    }
-                }
-            }
-
-            // 2. 检查并确保 "storeroom" (储藏室) 存在
-            if (!gameMap.containsKey("storeroom")) {
-                gameMap.put("storeroom", new Location("storeroom", "Storage for any entities not placed in the game"));
-            }
-
-            // 3. 解析 Paths (连通路径)
-            for (Edge pathEdge : paths.getEdges()) {
-                String fromName = pathEdge.getSource().getNode().getId().getId();
-                String toName = pathEdge.getTarget().getNode().getId().getId();
-
-                Location fromLoc = gameMap.get(fromName);
-                Location toLoc = gameMap.get(toName);
-
-                // 将目的地添加到起始地点的路径中
-                if (fromLoc != null && toLoc != null) {
-                    fromLoc.addPath(toName, toLoc);
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("Failed to parse entities file: " + e.getMessage());
-        }
+        // Parse action
+        parseActionsFile(actionsFile);
     }
 
     /**
@@ -152,7 +87,7 @@ public final class GameServer {
         // 2. 获取或创建玩家
         if (!players.containsKey(username)) {
             Player newPlayer = new Player(username, "A traveler in this world");
-            newPlayer.setCurrentLocation(startLocation); // startLocation 是你昨天在构造函数里记录的第一个地点
+            newPlayer.setCurrentLocation(startLocation);
             players.put(username, newPlayer);
         }
         Player currentPlayer = players.get(username);
@@ -221,27 +156,99 @@ public final class GameServer {
         }
     }
 
+    // Read DOT file
+    private void parseEntitiesFile(File entitiesFile) {
+        try {
+            Parser parser = new Parser();
+            FileReader reader = new FileReader(entitiesFile);
+            parser.parse(reader);
+            Graph wholeDocument = parser.getGraphs().get(0);
+            ArrayList<Graph> sections = wholeDocument.getSubgraphs();
+
+            Graph locations = sections.get(0);
+            Graph paths = sections.get(1);
+
+            // 1. Parse all locations and their internal entities
+            boolean isFirstLocation = true;
+            for (Graph locationGraph : locations.getSubgraphs()) {
+                // Get location nodes
+                Node locationDetails = locationGraph.getNodes(false).get(0);
+                String locName = locationDetails.getId().getId();
+                String locDesc = locationDetails.getAttribute("description");
+
+                Location newLocation = new Location(locName, locDesc);
+                gameMap.put(locName, newLocation);
+
+                // Set initial location
+                if (isFirstLocation) {
+                    startLocation = newLocation;
+                    isFirstLocation = false;
+                }
+
+                // Get categories inside the location (artefacts, furniture, characters)
+                for (Graph entityCategory : locationGraph.getSubgraphs()) {
+                    String categoryName = entityCategory.getId().getId();
+
+                    // Iterate through entities
+                    for (Node entityNode : entityCategory.getNodes(false)) {
+                        String entityName = entityNode.getId().getId();
+                        String entityDesc = entityNode.getAttribute("description");
+
+                        if (categoryName.equals("artefacts")) {
+                            newLocation.addEntity(new Artefact(entityName, entityDesc));
+                        } else if (categoryName.equals("furniture")) {
+                            newLocation.addEntity(new Furniture(entityName, entityDesc));
+                        } else if (categoryName.equals("characters")) {
+                            newLocation.addEntity(new Character(entityName, entityDesc));
+                        }
+                    }
+                }
+            }
+
+            // 2. Check "storeroom"
+            if (!gameMap.containsKey("storeroom")) {
+                gameMap.put("storeroom", new Location("storeroom", "Storage for any entities not placed in the game"));
+            }
+
+            // 3. Parse paths
+            for (Edge pathEdge : paths.getEdges()) {
+                String fromName = pathEdge.getSource().getNode().getId().getId();
+                String toName = pathEdge.getTarget().getNode().getId().getId();
+
+                Location fromLoc = gameMap.get(fromName);
+                Location toLoc = gameMap.get(toName);
+
+                if (fromLoc != null && toLoc != null) {
+                    fromLoc.addPath(toName, toLoc);
+                }
+            }
+
+        } catch (Exception e) {
+            System.err.println("Failed to parse entities file: " + e.getMessage());
+        }
+    }
+    // Look
     private String performLook(Player player) {
         Location loc = player.getCurrentLocation();
         StringBuilder result = new StringBuilder();
 
-        // 1. 地点名和描述
+        // 1. Location
         result.append("You are in ").append(loc.getName()).append(". ").append(loc.getDescription()).append("\n");
 
-        // 2. 这里的实体 (Artefacts, Furniture, Characters)
+        // 2. Entities (Artefacts, Furniture, Characters)
         result.append("You can see:\n");
         for (GameEntity entity : loc.getEntities()) {
             result.append("- ").append(entity.getDescription()).append(" (").append(entity.getName()).append(")\n");
         }
 
-        // 3. 其他玩家
+        // 3. Other Players
         for (Player other : players.values()) {
             if (other != player && other.getCurrentLocation() == loc) {
                 result.append("- Another player is here: ").append(other.getName()).append("\n");
             }
         }
 
-        // 4. 通往其他地点的路径
+        // 4. Paths
         result.append("You can go to:\n");
         for (String pathName : loc.getPaths().keySet()) {
             result.append("- ").append(pathName).append("\n");
@@ -249,7 +256,7 @@ public final class GameServer {
 
         return result.toString();
     }
-
+    // Goto
     private String performGoto(Player player, String destination) {
         Location currentLoc = player.getCurrentLocation();
         HashMap<String, Location> availablePaths = currentLoc.getPaths();
@@ -270,7 +277,7 @@ public final class GameServer {
             return "You cannot go to " + destination + " from here.";
         }
     }
-
+    // Inv
     private String performInventory(Player player) {
         ArrayList<Artefact> inv = player.getInventory();
         if (inv.isEmpty()) {
@@ -284,7 +291,7 @@ public final class GameServer {
         }
         return result.toString();
     }
-
+    // Get
     private String performGet(Player player, String itemName) {
         Location currentLoc = player.getCurrentLocation();
         GameEntity targetEntity = null;
@@ -311,7 +318,7 @@ public final class GameServer {
 
         return "You picked up the " + itemName + ".";
     }
-
+    // Drop
     private String performDrop(Player player, String itemName) {
         Artefact targetArtefact = null;
 
@@ -333,5 +340,64 @@ public final class GameServer {
         player.getCurrentLocation().addEntity(targetArtefact);
 
         return "You dropped the " + itemName + ".";
+    }
+    // Parse actions
+    private void parseActionsFile(File actionsFile) {
+        try {
+            DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+            Document document = builder.parse(actionsFile);
+            Element root = document.getDocumentElement();
+
+            // 获取所有的 <action> 节点
+            NodeList actionsList = root.getElementsByTagName("action");
+
+            for (int i = 0; i < actionsList.getLength(); i++) {
+                Element actionElement = (Element) actionsList.item(i);
+                GameAction newAction = new GameAction();
+
+                // 1. 解析 triggers
+                Element triggers = (Element) actionElement.getElementsByTagName("triggers").item(0);
+                NodeList keyphrases = triggers.getElementsByTagName("keyphrase");
+                for (int j = 0; j < keyphrases.getLength(); j++) {
+                    newAction.addTrigger(keyphrases.item(j).getTextContent());
+                }
+
+                // 2. 解析 subjects
+                Element subjects = (Element) actionElement.getElementsByTagName("subjects").item(0);
+                NodeList subjectEntities = subjects.getElementsByTagName("entity");
+                for (int j = 0; j < subjectEntities.getLength(); j++) {
+                    newAction.addSubject(subjectEntities.item(j).getTextContent());
+                }
+
+                // 3. 解析 consumed (小心：这个标签可能不存在！)
+                NodeList consumedNodes = actionElement.getElementsByTagName("consumed");
+                if (consumedNodes.getLength() > 0) {
+                    Element consumed = (Element) consumedNodes.item(0);
+                    NodeList consumedEntities = consumed.getElementsByTagName("entity");
+                    for (int j = 0; j < consumedEntities.getLength(); j++) {
+                        newAction.addConsumed(consumedEntities.item(j).getTextContent());
+                    }
+                }
+
+                // 4. 解析 produced (小心：这个标签也可能不存在！)
+                NodeList producedNodes = actionElement.getElementsByTagName("produced");
+                if (producedNodes.getLength() > 0) {
+                    Element produced = (Element) producedNodes.item(0);
+                    NodeList producedEntities = produced.getElementsByTagName("entity");
+                    for (int j = 0; j < producedEntities.getLength(); j++) {
+                        newAction.addProduced(producedEntities.item(j).getTextContent());
+                    }
+                }
+
+                // 5. 解析 narration
+                String narration = actionElement.getElementsByTagName("narration").item(0).getTextContent();
+                newAction.setNarration(narration);
+
+                // 把组装好的 Action 存入服务器字典
+                validActions.add(newAction);
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to parse actions XML file: " + e.getMessage());
+        }
     }
 }

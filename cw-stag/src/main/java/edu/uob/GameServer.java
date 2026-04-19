@@ -77,14 +77,19 @@ public final class GameServer {
     * @param command The incoming command to be processed
     */
     public String handleCommand(String command) {
-        // 1. 拆分用户名和指令 (例如 "simon: look")
+        // Split player and command
         String[] parts = command.split(":", 2);
         if (parts.length < 2) return "Error: Invalid command format. Expected 'username: command'.";
 
         String username = parts[0].trim();
         String rawCommand = parts[1].trim();
 
-        // 2. 获取或创建玩家
+        // Check if the command is empty
+        if (rawCommand.isEmpty()) {
+            return "Error: Command cannot be empty";
+        }
+
+        // Get or creat player
         if (!players.containsKey(username)) {
             Player newPlayer = new Player(username, "A traveler in this world");
             newPlayer.setCurrentLocation(startLocation);
@@ -92,7 +97,7 @@ public final class GameServer {
         }
         Player currentPlayer = players.get(username);
 
-        // 3. 处理指令 (大小写不敏感)
+        // Handle command
         String cmdLower = rawCommand.toLowerCase();
 
         if (cmdLower.equals("look")) {
@@ -102,6 +107,8 @@ public final class GameServer {
             return performGoto(currentPlayer, destination);
         } else if (cmdLower.equals("inv") || cmdLower.equals("inventory")) {
             return performInventory(currentPlayer);
+        } else if (cmdLower.equals("health")) {
+            return "Your health is at level " + currentPlayer.getHealth() + ".";
         } else if (cmdLower.startsWith("get ")) {
             String itemName = rawCommand.substring(4).trim();
             return performGet(currentPlayer, itemName);
@@ -488,6 +495,11 @@ public final class GameServer {
 
         // Consume entities(remove them from game map/inventory and put them in storeroom)
         for (String consumedName : action.getConsumed()) {
+            // Not handle health
+            if (consumedName.equals("health")) {
+                player.decreaseHealth();
+                continue;
+            }
             // Remove paths
             if (gameMap.containsKey(consumedName) && !consumedName.equals("storeroom")) {
                 currentLoc.getPaths().remove(consumedName);
@@ -519,6 +531,11 @@ public final class GameServer {
 
         // Produce entities(bring them from storeroom to the current location)
         for (String producedName : action.getProduced()) {
+            // Not handle health
+            if (producedName.equals("health")) {
+                player.increaseHealth();
+                continue;
+            }
             // Add paths
             if (gameMap.containsKey(producedName) && !producedName.equals("storeroom")) {
                 currentLoc.addPath(producedName, gameMap.get(producedName));
@@ -540,6 +557,23 @@ public final class GameServer {
                     currentLoc.addEntity(entityToProduce);
                 }
             }
+        }
+
+        // Check if the player has died
+        if (player.getHealth() <= 0) {
+            Location deathLocation = player.getCurrentLocation();
+
+            // Drop all inventory items
+            for (Artefact item : player.getInventory()) {
+                deathLocation.addEntity(item);
+            }
+            player.getInventory().clear();
+
+            // Respawn
+            player.setCurrentLocation(startLocation);
+            player.resetHealth();
+
+            return action.getNarration() + "\nYou died and lost all your items. You have been returned to the start.";
         }
 
         return action.getNarration();

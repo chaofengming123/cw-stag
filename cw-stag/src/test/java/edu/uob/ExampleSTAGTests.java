@@ -150,4 +150,77 @@ class ExampleSTAGTests {
         assertTrue(sendCommandToServer("simon: look").toLowerCase().contains("cellar"), "Produced path missing");
         assertFalse(sendCommandToServer("simon: inv").toLowerCase().contains("key"), "Consumed entity remains");
     }
+
+  // Test health reduction and respawn effects after drinking poison
+  @Test
+  void testHealthAndDeathMechanics() {
+    sendCommandToServer("simon: goto forest");
+    sendCommandToServer("simon: get key");
+    sendCommandToServer("simon: goto cabin");
+
+    String healthRes = sendCommandToServer("simon: health");
+    assertTrue(healthRes.contains("3"), "Initial health should be 3");
+
+    server.getGameMap().get("cabin").addEntity(new Artefact("poison", "Deadly poison"));
+    GameAction poisonAction = new GameAction();
+    poisonAction.addTrigger("drink");
+    poisonAction.addSubject("poison");
+    poisonAction.addConsumed("poison");
+    poisonAction.addConsumed("health");
+    poisonAction.setNarration("You drank the poison and feel terrible.");
+    server.getValidActions().add(poisonAction);
+
+    sendCommandToServer("simon: drink poison");
+    assertTrue(sendCommandToServer("simon: health").contains("2"), "Health should drop to 2");
+
+    server.getGameMap().get("cabin").addEntity(new Artefact("poison", "Deadly poison"));
+    sendCommandToServer("simon: drink poison");
+
+    server.getGameMap().get("cabin").addEntity(new Artefact("poison", "Deadly poison"));
+    String finalDrink = sendCommandToServer("simon: drink poison");
+
+    assertTrue(finalDrink.contains("You died"), "Should receive death message");
+    assertTrue(sendCommandToServer("simon: health").contains("3"), "Health should reset to 3 after respawn");
+    assertFalse(sendCommandToServer("simon: inv").contains("key"), "Inventory should be empty");
+  }
+
+  @Test
+  void testEdgeCasesAndRobustness() {
+    // Test empty commands and invalid inputs
+    String emptyRes = sendCommandToServer("simon: ");
+    assertTrue(emptyRes.contains("Error") || emptyRes.contains("Invalid"), "Should handle empty commands");
+
+    String nonsenseRes = sendCommandToServer("simon: asdfghjkl");
+    assertTrue(nonsenseRes.contains("You cannot do that") || nonsenseRes.contains("Unknown"), "Should handle nonsense commands");
+
+    // Test dropping items not in inventory
+    String dropRes = sendCommandToServer("simon: drop dragon");
+    assertTrue(dropRes.contains("do not have"), "Should handle dropping non-existent items");
+
+    // Test going to non-existent places
+    String gotoRes = sendCommandToServer("simon: goto mars");
+    assertTrue(gotoRes.contains("cannot go"), "Should handle invalid paths");
+  }
+
+  // Test when multiple actions match the user's input
+  @Test
+  void testAmbiguousCommands() {
+    GameAction hitAction1 = new GameAction();
+    hitAction1.addTrigger("hit");
+    hitAction1.addSubject("elf");
+
+    GameAction hitAction2 = new GameAction();
+    hitAction2.addTrigger("hit");
+    hitAction2.addSubject("elf");
+    hitAction2.addSubject("potion");
+
+    server.getValidActions().add(hitAction1);
+    server.getValidActions().add(hitAction2);
+
+    server.getGameMap().get("cabin").addEntity(new Character("elf", "An angry elf"));
+    server.getGameMap().get("cabin").addEntity(new Artefact("potion", "Magic potion"));
+
+    String response = sendCommandToServer("simon: hit the elf with the potion");
+    assertTrue(response.toLowerCase().contains("ambiguous"), "Should detect and reject ambiguous commands");
+  }
 }

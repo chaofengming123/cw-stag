@@ -1,4 +1,9 @@
-edu/uob/GameEntity.class
-edu/uob/GameServer.class
-edu/uob/GameAction.class
-edu/uob/GameClient.class
+edu\uob\Location.class
+edu\uob\Player.class
+edu\uob\Character.class
+edu\uob\Furniture.class
+edu\uob\GameServer.class
+edu\uob\GameClient.class
+edu\uob\Artefact.class
+edu\uob\GameEntity.class
+edu\uob\GameAction.class
